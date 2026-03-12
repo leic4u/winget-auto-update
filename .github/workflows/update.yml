@@ -2,7 +2,7 @@ name: winget auto updater
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "2,32 * * * *"
   workflow_dispatch:
 
 jobs:
