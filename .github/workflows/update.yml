@@ -1,0 +1,36 @@
+name: winget auto updater
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          Install-Module powershell-yaml -Scope CurrentUser -Force
+          winget install wingetcreate --source winget
+          winget install GitHub.cli
+
+      - name: Authenticate gh
+        shell: bash
+        run: |
+          echo "${{ secrets.WINGET_TOKEN }}" | gh auth login --with-token
+
+      - name: Check versions
+        shell: pwsh
+        run: |
+          ./scripts/check-version.ps1
+
+      - name: Submit updates
+        shell: pwsh
+        run: |
+          ./scripts/submit-winget.ps1
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

@@ -1,0 +1,8 @@
+id: Readdle.Spark
+checkver:
+  url: https://downloads.sparkmailapp.com/Spark3/win/dist/appcast.xml
+  regex: Version ([\\d.]+)
+autoupdate:
+  architecture:
+    x64:
+      https://downloads.sparkmailapp.com/Spark3/win/dist/$version/Spark.exe
