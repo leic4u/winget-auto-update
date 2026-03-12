@@ -2,7 +2,7 @@ name: winget auto updater
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "2,32 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -15,8 +15,8 @@ jobs:
         shell: pwsh
         run: |
           Install-Module powershell-yaml -Scope CurrentUser -Force
-          winget install wingetcreate --source winget
-          winget install GitHub.cli
+          winget install wingetcreate --source winget --accept-source-agreements --accept-package-agreements
+          winget install GitHub.cli --accept-source-agreements --accept-package-agreements
 
       - name: Authenticate gh
         shell: bash
