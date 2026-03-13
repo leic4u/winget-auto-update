@@ -1,8 +1,13 @@
-id: Readdle.Spark
+﻿id: Readdle.Spark
+current_version: "3.0.0"
+architecture:
+  x64:
+    url: https://downloads.sparkmailapp.com/Spark3/win/dist/3.0.0/Spark.exe
+    hash: ""
 checkver:
   url: https://downloads.sparkmailapp.com/Spark3/win/dist/appcast.xml
-  regex: Version ([\\d.]+)
+  regex: Version ([\d.]+)
 autoupdate:
   architecture:
     x64:
-      https://downloads.sparkmailapp.com/Spark3/win/dist/$version/Spark.exe
+      url: https://downloads.sparkmailapp.com/Spark3/win/dist/$version/Spark.exe

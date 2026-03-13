@@ -1,43 +1,40 @@
-Import-Module powershell-yaml
+﻿Import-Module powershell-yaml
+
 . "$PSScriptRoot/resolve-version.ps1"
 . "$PSScriptRoot/scan-url-version.ps1"
+. "$PSScriptRoot/calc-hash.ps1"
+. "$PSScriptRoot/github-assets.ps1"
 
 function Compare-Versions {
     param(
         [string]$v1,
         [string]$v2
     )
-    
-    # 预处理：移除 v 前缀和空白字符
+
     $v1 = $v1.Trim() -replace '^v', ''
     $v2 = $v2.Trim() -replace '^v', ''
-    
-    # 如果版本相同，直接返回 false
-    if ($v1 -eq $v2) {
-        return $false
-    }
-    
+
+    if ($v1 -eq $v2) { return $false }
+
     try {
-        # 尝试使用 .NET 的 Version 类进行精确比较
         $ver1 = [System.Version]::Parse($v1)
         $ver2 = [System.Version]::Parse($v2)
         return $ver1 -gt $ver2
-    } catch {
-        # 降级到逐段比较（处理非标准版本号）
-        $parts1 = $v1.Split('.') | ForEach-Object { 
+    }
+    catch {
+        $parts1 = $v1.Split('.') | ForEach-Object {
             $num = 0
             if ([int]::TryParse($_, [ref]$num)) { $num } else { 0 }
         }
-        $parts2 = $v2.Split('.') | ForEach-Object { 
+        $parts2 = $v2.Split('.') | ForEach-Object {
             $num = 0
             if ([int]::TryParse($_, [ref]$num)) { $num } else { 0 }
         }
-        
+
         $max = [Math]::Max($parts1.Count, $parts2.Count)
         for ($i = 0; $i -lt $max; $i++) {
             $p1 = if ($i -lt $parts1.Count) { $parts1[$i] } else { 0 }
             $p2 = if ($i -lt $parts2.Count) { $parts2[$i] } else { 0 }
-            
             if ($p1 -gt $p2) { return $true }
             if ($p1 -lt $p2) { return $false }
         }
@@ -45,26 +42,117 @@ function Compare-Versions {
     }
 }
 
+function Update-YamlConfig {
+    param(
+        [string]$filePath,
+        [string]$newVersion,
+        [object]$config,
+        [object]$githubInfo = $null
+    )
+
+    $yaml = Get-Content $filePath -Raw
+    $yamlLines = $yaml -split "`n"
+    $newLines = @()
+    $inArchitectureSection = $false
+    $archIndex = 0
+    $archsToUpdate = @{}
+    $newArchs = @{}
+
+    # 如果有 GitHub 信息，使用 assets 中的 URL
+    if ($githubInfo -and $githubInfo.downloads) {
+        foreach ($download in $githubInfo.downloads) {
+            $archsToUpdate[$download.arch] = @{
+                url = $download.url
+                hash = Get-InstallerHash $download.url
+            }
+        }
+    }
+    elseif ($config.autoupdate -and $config.autoupdate.architecture) {
+        # 使用模板生成 URL
+        foreach ($arch in $config.autoupdate.architecture.PSObject.Properties) {
+            $archName = $arch.Name
+            $template = $arch.Value.url
+            $newUrl = $template -replace '\$version', $newVersion
+            $archsToUpdate[$archName] = @{
+                url = $newUrl
+                hash = Get-InstallerHash $newUrl
+            }
+        }
+    }
+
+    # 检查是否有新架构需要添加
+    $existingArchs = @()
+    if ($config.architecture) {
+        $existingArchs = $config.architecture.PSObject.Properties.Name
+    }
+
+    foreach ($archName in $archsToUpdate.Keys) {
+        if ($existingArchs -notcontains $archName) {
+            $newArchs[$archName] = $archsToUpdate[$archName]
+            Write-Host "  New architecture detected: $archName"
+        }
+    }
+
+    # 重新构建 YAML 内容
+    $i = 0
+    while ($i -lt $yamlLines.Count) {
+        $line = $yamlLines[$i]
+
+        # 更新 current_version
+        if ($line -match '^current_version:') {
+            $newLines += "current_version: `"$newVersion`""
+            $i++
+            continue
+        }
+
+        # 处理 architecture 部分
+        if ($line -match '^architecture:') {
+            $newLines += $line
+            $i++
+            # 跳过旧的 architecture 内容，稍后重新添加
+            while ($i -lt $yamlLines.Count -and $yamlLines[$i] -match '^\s+\w+:|^\s+url:|^\s+hash:') {
+                $i++
+            }
+            # 添加更新后的 architecture
+            foreach ($archName in ($archsToUpdate.Keys | Sort-Object)) {
+                $archInfo = $archsToUpdate[$archName]
+                $newLines += "  $archName:"
+                $newLines += "    url: $($archInfo.url)"
+                $newLines += "    hash: $($archInfo.hash)"
+            }
+            # 添加新架构
+            foreach ($archName in ($newArchs.Keys | Sort-Object)) {
+                $archInfo = $newArchs[$archName]
+                $newLines += "  $archName:"
+                $newLines += "    url: $($archInfo.url)"
+                $newLines += "    hash: $($archInfo.hash)"
+            }
+            continue
+        }
+
+        $newLines += $line
+        $i++
+    }
+
+    $newLines -join "`n" | Set-Content $filePath -Encoding UTF8
+}
+
 $packages = Get-ChildItem "$PSScriptRoot/../packages/*.yaml"
 $result = @()
 $logFile = "$PSScriptRoot/../logs/check-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 
-# 确保日志目录存在
 $logDir = Split-Path $logFile -Parent
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
-# 清理超过 30 天的日志文件
 $maxLogAge = 30
-$oldLogs = Get-ChildItem $logDir -Filter "*.log" -ErrorAction SilentlyContinue | 
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$maxLogAge) }
+$oldLogs = Get-ChildItem $logDir -Filter "*.log" -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$maxLogAge) }
 if ($oldLogs) {
     $oldLogs | Remove-Item -Force -ErrorAction SilentlyContinue
     Write-Host "Cleaned up $($oldLogs.Count) old log files"
 }
 
-# 定义日志级别
 enum LogLevel {
     INFO
     WARNING
@@ -77,17 +165,16 @@ function Write-Log {
         [ValidateSet("INFO", "WARNING", "ERROR")]
         [string]$level = "INFO"
     )
-    
+
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logMessage = "[$timestamp] [$level] $message"
-    
-    # 根据级别设置颜色
+
     switch ($level) {
         "INFO" { Write-Host $logMessage -ForegroundColor Green }
         "WARNING" { Write-Host $logMessage -ForegroundColor Yellow }
         "ERROR" { Write-Host $logMessage -ForegroundColor Red }
     }
-    
+
     Add-Content -Path $logFile -Value $logMessage
 }
 
@@ -97,79 +184,75 @@ foreach ($pkg in $packages) {
     try {
         $config = Get-Content $pkg | ConvertFrom-Yaml
         $id = $config.id
+
         Write-Log "Checking $id" -level "INFO"
-        
+
+        $currentVersion = if ($config.current_version) { $config.current_version } else { "0.0.0" }
+        Write-Log " Current version (from config): $currentVersion" -level "INFO"
+
         $version = Resolve-Version $config
-        
-        # 如果主要方法失败，尝试备用方法
+
         if (-not $version) {
             try {
-                Write-Log "  Primary version check failed, trying fallback..." -level "WARNING"
+                Write-Log " Primary version check failed, trying fallback..." -level "WARNING"
                 $html = Invoke-WebRequest $config.checkver.url -UseBasicParsing -ErrorAction Stop
                 $version = Get-VersionFromUrl $html.Content
-            } catch {
-                Write-Log "  Warning: Failed to scan URL for version: $_" -level "WARNING"
+            }
+            catch {
+                Write-Log " Warning: Failed to scan URL for version: $_" -level "WARNING"
             }
         }
-        
+
         if (-not $version) {
-            Write-Log "  Skipped: Could not determine version" -level "ERROR"
+            Write-Log " Skipped: Could not determine version" -level "ERROR"
             continue
         }
-        
-        Write-Log "  Remote version: $version" -level "INFO"
-        
-        # 从 winget-pkgs 仓库获取当前版本（更可靠）
-        $currentVersion = "0.0.0"
-        try {
-            # 尝试从 GitHub 获取 winget manifest 版本
-            $manifestUrl = "https://raw.githubusercontent.com/microsoft/winget-pkgs/master/manifests/$($id.Split('.')[0])/$($id.Replace('.', '.'))"
-            $response = Invoke-WebRequest -Uri $manifestUrl -UseBasicParsing -ErrorAction Stop
-            if ($response.Content -match 'Version:\s*([0-9.]+)') {
-                $currentVersion = $matches[1].Trim()
-                Write-Log "  Current version (from manifest): $currentVersion" -level "INFO"
-            } else {
-                # 如果 manifest 中没有找到版本号，使用 winget show 作为后备
-                $current = winget show --id $id --exact 2>&1 | Select-String "Version:"
-                if ($current -match "([0-9.]+)") {
-                    $currentVersion = $matches[1]
-                } else {
-                    $currentVersion = "0.0.0"
-                }
-                Write-Log "  Current version (from winget): $currentVersion" -level "INFO"
-            }
-        } catch {
-            # 如果所有方法都失败，使用 winget show 作为后备
-            try {
-                $current = winget show --id $id --exact 2>&1 | Select-String "Version:"
-                if ($current -match "([0-9.]+)") {
-                    $currentVersion = $matches[1]
-                }
-                Write-Log "  Current version (fallback): $currentVersion" -level "INFO"
-            } catch {
-                Write-Log "  Warning: Could not determine current version: $_" -level "WARNING"
-            }
-        }
-        
+
+        Write-Log " Remote version: $version" -level "INFO"
+
         if (Compare-Versions -v1 $version -v2 $currentVersion) {
             $result += [PSCustomObject]@{
-                id = $id
+                id      = $id
                 version = $version
-                file = $pkg.Name
+                file    = $pkg.Name
             }
-            Write-Log "  UPDATE AVAILABLE: $currentVersion -> $version" -level "WARNING"
-        } else {
-            Write-Log "  Up to date" -level "INFO"
+            Write-Log " UPDATE AVAILABLE: $currentVersion -> $version" -level "WARNING"
+
+            # 对于 GitHub 项目，获取 assets 信息
+            $githubInfo = $null
+            if ($config.checkver.url -match "github.com") {
+                $repo = $config.checkver.url.Replace("https://github.com/", "")
+                Write-Log " Fetching GitHub assets for $repo..." -level "INFO"
+                $githubInfo = Resolve-GitHubAssets $repo
+                if ($githubInfo) {
+                    Write-Log " Found $($githubInfo.downloads.Count) assets from GitHub" -level "INFO"
+                }
+            }
+
+            # 更新 YAML 配置文件
+            Update-YamlConfig -filePath $pkg.FullName -newVersion $version -config $config -githubInfo $githubInfo
+            Write-Log " Updated config file with new version, urls and hashes" -level "INFO"
         }
-    } catch {
-        Write-Log "  Error processing $($pkg.Name): $_" -level "ERROR"
+        else {
+            Write-Log " Up to date" -level "INFO"
+        }
+    }
+    catch {
+        Write-Log " Error processing $($pkg.Name): $_" -level "ERROR"
     }
 }
 
 Write-Log "Check complete. Found $($result.Count) updates."
 
-$outputPath = "$PSScriptRoot/../updates.json"
-$result | ConvertTo-Json | Out-File $outputPath -Encoding UTF8
-Write-Log "Results saved to $outputPath"
-
-return $result
+if ($result.Count -gt 0) {
+    $outputPath = "$PSScriptRoot/../updates.json"
+    $result | ConvertTo-Json | Out-File $outputPath -Encoding UTF8
+    Write-Log "Results saved to $outputPath" -level "INFO"
+    $result | Format-Table -AutoSize
+    Write-Log "Updates found, exiting with code 0 for further processing" -level "INFO"
+    exit 0
+}
+else {
+    Write-Log "No updates found, exiting normally" -level "INFO"
+    exit 0
+}
