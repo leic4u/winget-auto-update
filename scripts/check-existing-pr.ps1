@@ -4,15 +4,15 @@ function Test-WingetPRExists {
         [string]$version
     )
     
-    # 如果没有设置 GITHUB_TOKEN，跳过检查
-    if (-not $env:GITHUB_TOKEN) {
-        Write-Warning "GITHUB_TOKEN not set, skipping PR existence check"
+    # 如果没有设置 WINGET_TOKEN，跳过检查
+    if (-not $env:WINGET_TOKEN) {
+        Write-Warning "WINGET_TOKEN not set, skipping PR existence check"
         return $false
     }
     
     try {
         # 设置认证
-        $env:GH_TOKEN = $env:GITHUB_TOKEN
+        $env:GH_TOKEN = $env:WINGET_TOKEN
         
         # 使用更精确的搜索
         $query = "$id $version"
