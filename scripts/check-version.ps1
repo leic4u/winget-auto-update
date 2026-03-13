@@ -53,8 +53,6 @@ function Update-YamlConfig {
     $yaml = Get-Content $filePath -Raw
     $yamlLines = $yaml -split "`n"
     $newLines = @()
-    $inArchitectureSection = $false
-    $archIndex = 0
     $archsToUpdate = @{}
     $newArchs = @{}
 
@@ -116,16 +114,16 @@ function Update-YamlConfig {
             # 添加更新后的 architecture
             foreach ($archName in ($archsToUpdate.Keys | Sort-Object)) {
                 $archInfo = $archsToUpdate[$archName]
-                $newLines += "  $archName:"
-                $newLines += "    url: $($archInfo.url)"
-                $newLines += "    hash: $($archInfo.hash)"
+                $newLines += "  ${archName}:"
+                $newLines += "    url: $($archInfo['url'])"
+                $newLines += "    hash: $($archInfo['hash'])"
             }
             # 添加新架构
             foreach ($archName in ($newArchs.Keys | Sort-Object)) {
                 $archInfo = $newArchs[$archName]
-                $newLines += "  $archName:"
-                $newLines += "    url: $($archInfo.url)"
-                $newLines += "    hash: $($archInfo.hash)"
+                $newLines += "  ${archName}:"
+                $newLines += "    url: $($archInfo['url'])"
+                $newLines += "    hash: $($archInfo['hash'])"
             }
             continue
         }
