@@ -1,4 +1,5 @@
-Import-Module powershell-yaml
+﻿Import-Module powershell-yaml
+
 . "$PSScriptRoot/resolve-download.ps1"
 . "$PSScriptRoot/calc-hash.ps1"
 . "$PSScriptRoot/check-existing-pr.ps1"
@@ -14,8 +15,7 @@ if (-not (Test-Path $logDir)) {
 
 # 清理超过 30 天的日志文件
 $maxLogAge = 30
-$oldLogs = Get-ChildItem $logDir -Filter "*.log" -ErrorAction SilentlyContinue | 
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$maxLogAge) }
+$oldLogs = Get-ChildItem $logDir -Filter "*.log" -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$maxLogAge) }
 if ($oldLogs) {
     $oldLogs | Remove-Item -Force -ErrorAction SilentlyContinue
     Write-Host "Cleaned up $($oldLogs.Count) old log files"
@@ -45,91 +45,94 @@ Write-Log "Processing $($updates.Count) updates"
 foreach ($item in $updates) {
     try {
         $file = "$PSScriptRoot/../packages/$($item.file)"
-        
         if (-not (Test-Path $file)) {
             Write-Log "Warning: Package config not found: $file"
             continue
         }
-        
+
         $config = Get-Content $file | ConvertFrom-Yaml
         $id = $config.id
         $version = $item.version
 
         Write-Log "Checking PR existence for $id $version"
         $exists = Test-WingetPRExists $id $version
+
         if ($exists) {
-            Write-Log "  PR already exists, skipping $id $version"
+            Write-Log " PR already exists, skipping $id $version"
             continue
         }
 
-        Write-Log "  Processing $id -> $version"
+        Write-Log " Processing $id -> $version"
+
         $downloads = Resolve-Download $config $version
-        
         if (-not $downloads -or $downloads.Count -eq 0) {
-            Write-Log "  Warning: No download URLs found"
+            Write-Log " Warning: No download URLs found"
             continue
         }
 
         $urlParts = @()
         foreach ($d in $downloads) {
-            Write-Log "  Downloading $($d.url) for hash calculation..."
+            Write-Log " Downloading $($d.url) for hash calculation..."
             try {
                 $hash = Get-InstallerHash $d.url
-                # 格式: URL|架构|哈希
+                # 格式：URL|架构|哈希
                 $urlParts += "$($d.url)|$($d.arch)|$($hash)"
-                Write-Log "  Hash: $hash"
-            } catch {
-                Write-Log "  Error calculating hash: $_"
+                Write-Log " Hash: $hash"
+            }
+            catch {
+                Write-Log " Error calculating hash: $_"
                 continue
             }
         }
 
         if ($urlParts.Count -eq 0) {
-            Write-Log "  Error: No valid downloads after hash calculation"
+            Write-Log " Error: No valid downloads after hash calculation"
             continue
         }
 
         $urlString = $urlParts -join ","
-        
-        Write-Log "  Submitting to winget-pkgs..." -level "INFO"
-        
+        Write-Log " Submitting to winget-pkgs..." -level "INFO"
+
         # 添加重试机制
         $maxRetries = 3
         $retryCount = 0
         $success = $false
-        
+
         while (-not $success -and $retryCount -lt $maxRetries) {
             try {
-                $output = wingetcreate update $id `
+                # 直接执行命令，不捕获输出到变量
+                wingetcreate update $id `
                     --version $version `
                     --urls $urlString `
                     --submit `
                     --token $env:WINGET_TOKEN `
                     2>&1
-                
+
                 if ($LASTEXITCODE -eq 0) {
                     $success = $true
-                    Write-Log "  Successfully submitted $id $version" -level "INFO"
-                } else {
+                    Write-Log " Successfully submitted $id $version" -level "INFO"
+                }
+                else {
                     throw "wingetcreate exited with code $LASTEXITCODE"
                 }
-            } catch {
+            }
+            catch {
                 $retryCount++
-                Write-Log "  Attempt $retryCount failed: $_" -level "ERROR"
-                
+                Write-Log " Attempt $retryCount failed: $_" -level "ERROR"
                 if ($retryCount -lt $maxRetries) {
-                    $delay = 30 * $retryCount  # 指数退避
-                    Write-Log "  Retrying in $delay seconds..." -level "WARNING"
+                    $delay = 30 * $retryCount # 指数退避
+                    Write-Log " Retrying in $delay seconds..." -level "WARNING"
                     Start-Sleep -Seconds $delay
-                } else {
-                    Write-Log "  Error: Failed after $maxRetries attempts" -level "ERROR"
-                    Write-Log "  Last error: $_" -level "ERROR"
+                }
+                else {
+                    Write-Log " Error: Failed after $maxRetries attempts" -level "ERROR"
+                    Write-Log " Last error: $_" -level "ERROR"
                 }
             }
         }
-        
-    } catch {
-        Write-Log "  Error processing $($item.id): $_"
+    }
+    catch {
+        Write-Log " Error processing $($item.id): $_"
     }
 }
 

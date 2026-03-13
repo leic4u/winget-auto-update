@@ -106,7 +106,7 @@ foreach ($pkg in $packages) {
             try {
                 Write-Log "  Primary version check failed, trying fallback..." -level "WARNING"
                 $html = Invoke-WebRequest $config.checkver.url -UseBasicParsing -ErrorAction Stop
-                $version = Scan-UrlVersion $html.Content
+                $version = Get-VersionFromUrl $html.Content
             } catch {
                 Write-Log "  Warning: Failed to scan URL for version: $_" -level "WARNING"
             }

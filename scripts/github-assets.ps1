@@ -13,7 +13,7 @@ function Resolve-GitHubAssets($repo) {
     try {
         $release = Invoke-RestMethod $api -Headers $headers -ErrorAction Stop
     } catch {
-        Write-Error "Failed to fetch GitHub release for $repo: $_"
+        Write-Error "Failed to fetch GitHub release for ${repo}: $_"
         return $null
     }
     
