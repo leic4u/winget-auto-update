@@ -6,8 +6,8 @@ function Resolve-GitHubAssets($repo) {
         "Accept" = "application/vnd.github.v3+json"
         "User-Agent" = "winget-auto-updater"
     }
-    if ($env:GITHUB_TOKEN) {
-        $headers["Authorization"] = "token $env:GITHUB_TOKEN"
+    if ($env:WINGET_TOKEN) {
+        $headers["Authorization"] = "token $env:WINGET_TOKEN"
     }
     
     try {
