@@ -1,4 +1,9 @@
-﻿Import-Module powershell-yaml
+﻿if (-not (Get-Module -ListAvailable -Name powershell-yaml)) {
+    Write-Error "Required module 'powershell-yaml' is not installed. Install it with: Install-Module powershell-yaml -Scope CurrentUser -Force"
+    exit 1
+}
+
+Import-Module powershell-yaml
 
 . "$PSScriptRoot/resolve-version.ps1"
 . "$PSScriptRoot/scan-url-version.ps1"
@@ -59,9 +64,16 @@ function Update-YamlConfig {
     # 如果有 GitHub 信息，使用 assets 中的 URL
     if ($githubInfo -and $githubInfo.downloads) {
         foreach ($download in $githubInfo.downloads) {
-            $archsToUpdate[$download.arch] = @{
-                url = $download.url
-                hash = Get-InstallerHash $download.url
+            if (-not [string]::IsNullOrWhiteSpace($download.url)) {
+                try {
+                    $hash = Get-InstallerHash $download.url
+                    $archsToUpdate[$download.arch] = @{
+                        url = $download.url
+                        hash = $hash
+                    }
+                } catch {
+                    Write-Host "  Warning: Failed to compute hash for $($download.url): $_"
+                }
             }
         }
     }
@@ -71,9 +83,16 @@ function Update-YamlConfig {
             $archName = $arch.Name
             $template = $arch.Value.url
             $newUrl = $template -replace '\$version', $newVersion
-            $archsToUpdate[$archName] = @{
-                url = $newUrl
-                hash = Get-InstallerHash $newUrl
+            if (-not [string]::IsNullOrWhiteSpace($newUrl)) {
+                try {
+                    $hash = Get-InstallerHash $newUrl
+                    $archsToUpdate[$archName] = @{
+                        url = $newUrl
+                        hash = $hash
+                    }
+                } catch {
+                    Write-Host "  Warning: Failed to compute hash for ${newUrl}: $_"
+                }
             }
         }
     }
@@ -137,6 +156,7 @@ function Update-YamlConfig {
 
 $packages = Get-ChildItem "$PSScriptRoot/../packages/*.yaml"
 $result = @()
+$hasError = $false
 $logFile = "$PSScriptRoot/../logs/check-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 
 $logDir = Split-Path $logFile -Parent
@@ -236,6 +256,7 @@ foreach ($pkg in $packages) {
         }
     }
     catch {
+        $hasError = $true
         Write-Log " Error processing $($pkg.Name): $_" -level "ERROR"
     }
 }
@@ -248,9 +269,13 @@ if ($result.Count -gt 0) {
     Write-Log "Results saved to $outputPath" -level "INFO"
     $result | Format-Table -AutoSize
     Write-Log "Updates found, exiting with code 0 for further processing" -level "INFO"
-    exit 0
-}
-else {
+} else {
     Write-Log "No updates found, exiting normally" -level "INFO"
-    exit 0
 }
+
+if ($hasError) {
+    Write-Log "One or more errors occurred during check-version" -level "ERROR"
+    exit 1
+}
+
+exit 0
