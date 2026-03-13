@@ -31,7 +31,7 @@ function Resolve-Version($config) {
                 return $release.name.TrimStart("v")
             }
         } catch {
-            Write-Warning "Failed to fetch version from $url: $_"
+            Write-Warning "Failed to fetch version from ${url}: $_"
             return $null
         }
     }else {
