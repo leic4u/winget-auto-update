@@ -1,8 +1,79 @@
-﻿Import-Module powershell-yaml
+Import-Module powershell-yaml
 
 . "$PSScriptRoot/resolve-download.ps1"
 . "$PSScriptRoot/calc-hash.ps1"
 . "$PSScriptRoot/check-existing-pr.ps1"
+
+# 函数：更新 YAML 文件中的 current_package 信息
+function Update-PackageCurrentInfo {
+    param(
+        [string]$filePath,
+        [string]$version,
+        [array]$downloads
+    )
+    
+    $yaml = Get-Content $filePath -Raw
+    $yamlLines = $yaml -split "`r?`n"
+    $newLines = @()
+    
+    $i = 0
+    while ($i -lt $yamlLines.Count) {
+        $line = $yamlLines[$i]
+        $indent = $line.Length - $line.TrimStart().Length
+        
+        # 跳过旧的 current_package 部分，稍后重新添加
+        if ($line -match '^current_package:') {
+            $currentPackageIndent = $indent
+            $i++
+            # 跳过 current_package 下的所有内容
+            while ($i -lt $yamlLines.Count) {
+                $nextLine = $yamlLines[$i]
+                $nextIndent = $nextLine.Length - $nextLine.TrimStart().Length
+                if ($nextLine.Trim() -ne '' -and $nextIndent -le $currentPackageIndent) {
+                    break
+                }
+                $i++
+            }
+            # 添加新的 current_package 部分
+            $newLines += "current_package:"
+            $newLines += "  version: `"$version`""
+            $newLines += "  architecture:"
+            # 添加下载信息
+            foreach ($d in $downloads) {
+                $archName = $d.arch
+                $newLines += "    ${archName}:"
+                $newLines += "      url: $($d.url)"
+                # 如果 downloads 中有 hash 信息，使用它
+                if ($d.hash) {
+                    $newLines += "      hash: $($d.hash)"
+                } else {
+                    $newLines += '      hash: ""'
+                }
+            }
+            continue
+        }
+        
+        # 跳过旧的 current_version 和 architecture（顶层）
+        if ($line -match '^(current_version|architecture):') {
+            $oldKeyIndent = $indent
+            $i++
+            while ($i -lt $yamlLines.Count) {
+                $nextLine = $yamlLines[$i]
+                $nextIndent = $nextLine.Length - $nextLine.TrimStart().Length
+                if ($nextLine.Trim() -ne '' -and $nextIndent -le $oldKeyIndent) {
+                    break
+                }
+                $i++
+            }
+            continue
+        }
+        
+        $newLines += $line
+        $i++
+    }
+    
+    $newLines -join "`n" | Set-Content $filePath -Encoding UTF8
+}
 
 $updatesFile = "$PSScriptRoot/../updates.json"
 $logFile = "$PSScriptRoot/../logs/submit-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
@@ -111,8 +182,27 @@ foreach ($item in $updates) {
                 if ($LASTEXITCODE -eq 0) {
                     $success = $true
                     Write-Log " Successfully submitted $id $version" -level "INFO"
-                }
-                else {
+                    
+                    # 更新 YAML 文件中的 current_package
+                    Write-Log " Updating current_package in $file" -level "INFO"
+                    try {
+                        # 构建 downloads 数组（包含 hash）
+                        $downloadsWithHash = @()
+                        for ($j = 0; $j -lt $downloads.Count; $j++) {
+                            $d = $downloads[$j]
+                            $hash = $urlParts[$j].Split('|')[2]
+                            $downloadsWithHash += [PSCustomObject]@{
+                                arch = $d.arch
+                                url = $d.url
+                                hash = $hash
+                            }
+                        }
+                        Update-PackageCurrentInfo -filePath $file -version $version -downloads $downloadsWithHash
+                        Write-Log " Successfully updated current_package" -level "INFO"
+                    } catch {
+                        Write-Log " Warning: Failed to update current_package: $_" -level "WARNING"
+                    }
+                } else {
                     throw "wingetcreate exited with code $LASTEXITCODE"
                 }
             }

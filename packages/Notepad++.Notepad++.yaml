@@ -1,12 +1,13 @@
 ﻿id: Notepad++.Notepad++
-current_version: "8.7.8"
-architecture:
-  x64:
-    url: https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.8/npp.8.7.8.portable.x64.zip
-    hash: ""
-  x86:
-    url: https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.8/npp.8.7.8.portable.zip
-    hash: ""
+current_package:
+  version: "8.7.8"
+  architecture:
+    x64:
+      url: https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.8/npp.8.7.8.portable.x64.zip
+      hash: ""
+    x86:
+      url: https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.8/npp.8.7.8.portable.zip
+      hash: ""
 checkver:
   url: https://github.com/notepad-plus-plus/notepad-plus-plus
 autoupdate:

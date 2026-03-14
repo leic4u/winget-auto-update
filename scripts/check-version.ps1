@@ -56,7 +56,7 @@ function Update-YamlConfig {
     )
 
     $yaml = Get-Content $filePath -Raw
-    $yamlLines = $yaml -split "`n"
+    $yamlLines = $yaml -split "`r?`n"
     $newLines = @()
     $archsToUpdate = @{}
     $newArchs = @{}
@@ -99,10 +99,9 @@ function Update-YamlConfig {
 
     # 检查是否有新架构需要添加
     $existingArchs = @()
-    if ($config.architecture) {
-        $existingArchs = $config.architecture.PSObject.Properties.Name
+    if ($config.current_package -and $config.current_package.architecture) {
+        $existingArchs = $config.current_package.architecture.PSObject.Properties.Name
     }
-
     foreach ($archName in $archsToUpdate.Keys) {
         if ($existingArchs -notcontains $archName) {
             $newArchs[$archName] = $archsToUpdate[$archName]
@@ -112,45 +111,68 @@ function Update-YamlConfig {
 
     # 重新构建 YAML 内容
     $i = 0
+    $inCurrentPackage = $false
+    $currentPackageIndent = 0
     while ($i -lt $yamlLines.Count) {
         $line = $yamlLines[$i]
-
-        # 更新 current_version
-        if ($line -match '^current_version:') {
-            $newLines += "current_version: `"$newVersion`""
+        $indent = $line.Length - $line.TrimStart().Length
+        
+        # 跳过旧的 current_package 部分，稍后重新添加
+        if ($line -match '^current_package:') {
+            $inCurrentPackage = $true
+            $currentPackageIndent = $indent
             $i++
-            continue
-        }
-
-        # 处理 architecture 部分
-        if ($line -match '^architecture:') {
-            $newLines += $line
-            $i++
-            # 跳过旧的 architecture 内容，稍后重新添加
-            while ($i -lt $yamlLines.Count -and $yamlLines[$i] -match '^\s+\w+:|^\s+url:|^\s+hash:') {
+            # 跳过 current_package 下的所有内容
+            while ($i -lt $yamlLines.Count) {
+                $nextLine = $yamlLines[$i]
+                $nextIndent = $nextLine.Length - $nextLine.TrimStart().Length
+                # 如果遇到相同或更少缩进的行，说明 current_package 结束
+                if ($nextLine.Trim() -ne '' -and $nextIndent -le $currentPackageIndent) {
+                    break
+                }
                 $i++
             }
+            # 添加新的 current_package 部分
+            $newLines += "current_package:"
+            $newLines += "  version: `"$newVersion`""
+            $newLines += "  architecture:"
             # 添加更新后的 architecture
             foreach ($archName in ($archsToUpdate.Keys | Sort-Object)) {
                 $archInfo = $archsToUpdate[$archName]
-                $newLines += "  ${archName}:"
-                $newLines += "    url: $($archInfo['url'])"
-                $newLines += "    hash: $($archInfo['hash'])"
+                $newLines += "    ${archName}:"
+                $newLines += "      url: $($archInfo['url'])"
+                $newLines += "      hash: $($archInfo['hash'])"
             }
             # 添加新架构
             foreach ($archName in ($newArchs.Keys | Sort-Object)) {
                 $archInfo = $newArchs[$archName]
-                $newLines += "  ${archName}:"
-                $newLines += "    url: $($archInfo['url'])"
-                $newLines += "    hash: $($archInfo['hash'])"
+                $newLines += "    ${archName}:"
+                $newLines += "      url: $($archInfo['url'])"
+                $newLines += "      hash: $($archInfo['hash'])"
+            }
+            $inCurrentPackage = $false
+            continue
+        }
+        
+        # 跳过旧的 current_version 和 architecture（顶层）
+        if ($line -match '^(current_version|architecture):') {
+            # 跳过这一行及其子内容
+            $oldKeyIndent = $indent
+            $i++
+            while ($i -lt $yamlLines.Count) {
+                $nextLine = $yamlLines[$i]
+                $nextIndent = $nextLine.Length - $nextLine.TrimStart().Length
+                if ($nextLine.Trim() -ne '' -and $nextIndent -le $oldKeyIndent) {
+                    break
+                }
+                $i++
             }
             continue
         }
-
+        
         $newLines += $line
         $i++
     }
-
     $newLines -join "`n" | Set-Content $filePath -Encoding UTF8
 }
 
@@ -205,7 +227,7 @@ foreach ($pkg in $packages) {
 
         Write-Log "Checking $id" -level "INFO"
 
-        $currentVersion = if ($config.current_version) { $config.current_version } else { "0.0.0" }
+        $currentVersion = if ($config.current_package -and $config.current_package.version) { $config.current_package.version } elseif ($config.current_version) { $config.current_version } else { "0.0.0" }
         Write-Log " Current version (from config): $currentVersion" -level "INFO"
 
         $version = Resolve-Version $config
